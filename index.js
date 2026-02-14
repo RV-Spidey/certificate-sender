@@ -11,10 +11,11 @@ const app = express();
 app.use(express.json());
 
 let sock;
-let isReady = false; // ✅ connection status
+let isReady = false;
+let starting = false; // ✅ prevents duplicate reconnects
 
 // ============================
-// DELAY HELPERS
+// HELPERS
 // ============================
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -32,13 +33,16 @@ app.get("/", (req, res) => {
 });
 
 // ============================
-// SEND CERTIFICATE (FROM N8N)
+// SEND CERTIFICATE API
 // ============================
 app.post("/send-certificate", async (req, res) => {
   try {
+    console.log("📥 Incoming request:", req.body);
+
     const { phone, name, pdfUrl } = req.body;
 
     if (!isReady || !sock) {
+      console.log("⚠️ WhatsApp not ready");
       return res.status(500).send("WhatsApp not connected yet");
     }
 
@@ -46,23 +50,18 @@ app.post("/send-certificate", async (req, res) => {
       return res.status(400).send("Missing parameters");
     }
 
-    // clean phone number
     const cleanPhone = phone.replace(/\D/g, "");
     const jid = cleanPhone + "@s.whatsapp.net";
 
     console.log("📩 Sending certificate to:", jid);
 
-    // --------------------------
-    // HUMAN LIKE BEHAVIOUR
-    // --------------------------
+    // ---- Human behaviour ----
     await randomHumanDelay();
 
     await sock.sendPresenceUpdate("composing", jid);
     await sleep(2500);
 
-    // --------------------------
-    // SEND DOCUMENT
-    // --------------------------
+    // ---- Send PDF ----
     await sock.sendMessage(jid, {
       document: { url: pdfUrl },
       mimetype: "application/pdf",
@@ -89,6 +88,12 @@ app.post("/send-certificate", async (req, res) => {
 // START WHATSAPP BOT
 // ============================
 async function startBot() {
+
+  if (starting) return;
+  starting = true;
+
+  console.log("🚀 Starting WhatsApp bot...");
+
   const { state, saveCreds } =
     await useMultiFileAuthState("./auth");
 
@@ -97,7 +102,9 @@ async function startBot() {
   sock = makeWASocket({
     auth: state,
     version,
-    browser: ["CertificateBot", "Chrome", "1.0"]
+    browser: ["CertificateBot", "Chrome", "1.0"],
+    markOnlineOnConnect: true,
+    syncFullHistory: false
   });
 
   sock.ev.on("creds.update", saveCreds);
@@ -111,11 +118,17 @@ async function startBot() {
 
     if (connection === "open") {
       console.log("✅ WhatsApp Connected");
+
+      // small stabilization delay
+      await sleep(3000);
+
       isReady = true;
+      starting = false;
     }
 
     if (connection === "close") {
       isReady = false;
+      starting = false;
 
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !==
