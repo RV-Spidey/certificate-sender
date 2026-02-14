@@ -10,12 +10,19 @@ import qrcode from "qrcode-terminal";
 const app = express();
 app.use(express.json());
 
-let sock; // global WhatsApp socket
+let sock;
+let isReady = false; // ✅ connection status
 
 // ============================
-// SMALL DELAY FUNCTION
+// DELAY HELPERS
 // ============================
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+const randomHumanDelay = async () => {
+  const delay = 4000 + Math.random() * 6000;
+  console.log(`⏳ Human delay: ${Math.floor(delay)} ms`);
+  await sleep(delay);
+};
 
 // ============================
 // HEALTH CHECK
@@ -25,33 +32,36 @@ app.get("/", (req, res) => {
 });
 
 // ============================
-// SEND CERTIFICATE API (FROM N8N)
+// SEND CERTIFICATE (FROM N8N)
 // ============================
 app.post("/send-certificate", async (req, res) => {
   try {
     const { phone, name, pdfUrl } = req.body;
 
-    if (!sock) {
-      return res.status(500).send("WhatsApp not connected");
+    if (!isReady || !sock) {
+      return res.status(500).send("WhatsApp not connected yet");
     }
 
-    const jid = phone.replace(/\D/g, "") + "@s.whatsapp.net";
+    if (!phone || !pdfUrl) {
+      return res.status(400).send("Missing parameters");
+    }
 
-    console.log("📩 Request received for:", jid);
+    // clean phone number
+    const cleanPhone = phone.replace(/\D/g, "");
+    const jid = cleanPhone + "@s.whatsapp.net";
+
+    console.log("📩 Sending certificate to:", jid);
 
     // --------------------------
-    // HUMAN LIKE DELAY
+    // HUMAN LIKE BEHAVIOUR
     // --------------------------
-    const randomDelay = 3000 + Math.random() * 4000;
-    console.log(`⏳ Waiting ${Math.floor(randomDelay)} ms`);
-    await sleep(randomDelay);
+    await randomHumanDelay();
 
-    // typing presence (looks human)
     await sock.sendPresenceUpdate("composing", jid);
-    await sleep(2000);
+    await sleep(2500);
 
     // --------------------------
-    // SEND PDF DOCUMENT
+    // SEND DOCUMENT
     // --------------------------
     await sock.sendMessage(jid, {
       document: { url: pdfUrl },
@@ -65,12 +75,13 @@ app.post("/send-certificate", async (req, res) => {
 
     await sock.sendPresenceUpdate("paused", jid);
 
-    console.log("✅ Certificate sent to", jid);
-    res.send("sent");
+    console.log("✅ Sent successfully:", jid);
+
+    res.send({ success: true });
 
   } catch (err) {
     console.error("❌ Send error:", err);
-    res.status(500).send("failed");
+    res.status(500).send("Failed to send");
   }
 });
 
@@ -91,29 +102,33 @@ async function startBot() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("connection.update", ({ connection, qr, lastDisconnect }) => {
+  sock.ev.on("connection.update", async ({ connection, qr, lastDisconnect }) => {
 
     if (qr) {
-      console.log("\n📱 Scan this QR with WhatsApp:\n");
+      console.log("\n📱 Scan this QR:\n");
       qrcode.generate(qr, { small: true });
     }
 
     if (connection === "open") {
-      console.log("✅ WhatsApp Connected Successfully");
+      console.log("✅ WhatsApp Connected");
+      isReady = true;
     }
 
     if (connection === "close") {
+      isReady = false;
+
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !==
         DisconnectReason.loggedOut;
 
-      console.log("❌ Disconnected");
+      console.log("❌ Connection closed");
 
       if (shouldReconnect) {
-        console.log("🔄 Reconnecting...");
+        console.log("🔄 Reconnecting in 5s...");
+        await sleep(5000);
         startBot();
       } else {
-        console.log("🚫 Logged out. Delete /auth folder and rescan.");
+        console.log("🚫 Logged out — delete /auth and rescan");
       }
     }
   });
@@ -125,7 +140,7 @@ async function startBot() {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`🌍 Server running on port ${PORT}`);
+  console.log(`🌍 Server running on ${PORT}`);
 });
 
 startBot();
