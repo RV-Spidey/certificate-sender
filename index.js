@@ -17,6 +17,23 @@ let sock = null;
 let isWhatsAppReady = false;
 
 /* ===============================
+   HELPER — PHONE NORMALIZER
+   (prevents phone.replace crash)
+================================ */
+const normalizePhone = (phone) => {
+  let clean = (phone ?? "")
+    .toString()
+    .replace(/\D/g, "");
+
+  // add India country code if missing
+  if (clean && !clean.startsWith("91")) {
+    clean = "91" + clean;
+  }
+
+  return clean;
+};
+
+/* ===============================
    HEALTH CHECK
 ================================ */
 app.get("/", (req, res) => {
@@ -28,7 +45,7 @@ app.get("/", (req, res) => {
 });
 
 /* ===============================
-   DEBUG ENDPOINT (IMPORTANT)
+   DEBUG STATUS
 ================================ */
 app.get("/status", (req, res) => {
   res.json({
@@ -41,6 +58,7 @@ app.get("/status", (req, res) => {
    SEND CERTIFICATE (FROM N8N)
 ================================ */
 app.post("/send-certificate", async (req, res) => {
+
   console.log("\n==============================");
   console.log("📥 REQUEST RECEIVED");
   console.log("BODY:", req.body);
@@ -49,7 +67,7 @@ app.post("/send-certificate", async (req, res) => {
   try {
     const { phone, name, pdfUrl } = req.body;
 
-    // ---- VALIDATIONS ----
+    /* ---- VALIDATIONS ---- */
     if (!sock) {
       console.log("❌ Socket not initialized");
       return res.status(500).send("Socket not ready");
@@ -65,12 +83,20 @@ app.post("/send-certificate", async (req, res) => {
       return res.status(400).send("Missing phone or pdfUrl");
     }
 
-    const jid = phone.replace(/\D/g, "") + "@s.whatsapp.net";
+    /* ---- SAFE PHONE HANDLING ---- */
+    const cleanPhone = normalizePhone(phone);
 
+    if (!cleanPhone) {
+      return res.status(400).send("Invalid phone number");
+    }
+
+    const jid = cleanPhone + "@s.whatsapp.net";
+
+    console.log("📱 Clean Phone:", cleanPhone);
     console.log("📄 Target JID:", jid);
     console.log("📄 PDF URL:", pdfUrl);
 
-    // simulate typing
+    /* ---- typing simulation ---- */
     console.log("⌨️ Sending composing presence...");
     await sock.sendPresenceUpdate("composing", jid);
 
